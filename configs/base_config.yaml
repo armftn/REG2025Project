@@ -1,0 +1,29 @@
+# Configuration pour l'entraînement du modèle TransMIL sur les scores de Gleason
+project_name: "REG2025Project_armftn"
+
+data_paths:
+  json_path: "data/train.json"
+  features_path: "data/features_histoencoder"
+
+n_splits: 5
+batch_size: 16
+num_workers: 0
+epochs: 50
+patience: 10
+
+lr: 0.0002486 # 1e-5
+weight_decay: 0.0001
+
+# Nouveaux paramètres pour pondérer la loss multi-tâches
+loss_weights:
+  gleason: 1.0
+  grade_group: 1.5 # On donne un peu plus d'importance au Grade Group
+  volume: 0.5      # Moins d'importance à la régression, souvent plus bruyante
+
+model_params:
+  input_dim: 512
+  hidden_dim: 512
+  n_classes: 9
+  n_heads: 8
+  n_layers: 3
+  dropout: 0.25
