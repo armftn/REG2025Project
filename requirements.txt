@@ -1,0 +1,13 @@
+torch
+torchvision
+wandb
+openslide-python
+pandas
+numpy
+scikit-learn
+pillow
+matplotlib
+imbalanced-learn
+PyYAML
+tqdm
+pyarrow
