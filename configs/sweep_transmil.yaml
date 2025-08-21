@@ -1,0 +1,47 @@
+# On spécifie la commande exacte que l'agent doit lancer.
+command:
+  - ${env}
+  - C:\REG2025Project_armftn\venv\Scripts\python.exe
+  - -m          # <-- On ajoute le flag -m
+  - src.train   # <-- On utilise la notation "module"
+  - ${args}
+
+# Nom du programme à exécuter pour chaque expérience
+program: src/train.py 
+# Méthode de recherche : 'bayes' est une recherche intelligente, plus efficace que 'random'
+method: bayes 
+# Métrique à optimiser : on veut maximiser la précision en validation
+metric:
+  name: avg_val_accuracy 
+  goal: maximize
+
+# Liste des hyperparamètres à tester
+parameters:
+  lr:
+    # On teste des learning rates entre 1e-5 et 5e-4 sur une échelle logarithmique
+    distribution: log_uniform_values
+    min: 0.00001
+    max: 0.0005
+  
+  hidden_dim:
+    # On teste trois tailles différentes pour le modèle
+    values: [128, 256, 512]
+
+  n_layers:
+    # On teste deux ou trois couches de Transformer
+    values: [2, 3]
+
+  n_heads:
+    # Le nombre de têtes d'attention doit être un diviseur de hidden_dim
+    values: [4, 8]
+
+  dropout:
+    # On teste différentes intensités de dropout pour la régularisation
+    values: [0.1, 0.25, 0.4]
+
+  weight_decay:
+    # On teste différentes intensités de weight decay
+    values: [0.00001, 0.0001, 0.001]
+  
+  model_name:
+    value: "transmil" # <-- On spécifie que ce sweep est pour TransMIL

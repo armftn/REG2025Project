@@ -11,7 +11,7 @@ num_workers: 0
 epochs: 50
 patience: 10
 
-lr: 0.0002486 # 1e-5
+lr: 0.00047851 # 1e-5
 weight_decay: 0.0001
 
 # Nouveaux paramètres pour pondérer la loss multi-tâches
@@ -22,8 +22,15 @@ loss_weights:
 
 model_params:
   input_dim: 512
-  hidden_dim: 512
+  hidden_dim: 128
   n_classes: 9
   n_heads: 8
   n_layers: 3
+  dropout: 0.1
+
+  # --- On remplace `model_params` par `clam_params` ---
+clam_params:
+  input_dim: 512
+  n_gleason_classes: 9
+  n_gg_classes: 5
   dropout: 0.25

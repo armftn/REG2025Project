@@ -1,98 +1,81 @@
-import os
+import torch
 import numpy as np
 import pandas as pd
-import torch
 from torch.utils.data import Dataset
-from src.utils import extract_all_labels
-from tqdm import tqdm
+from sklearn.cluster import KMeans # <-- NOUVEL IMPORT
 
 class WsiReportDataset(Dataset):
     """
-    Dataset capable de charger des features soit depuis des fichiers .npy (pré-chargés en RAM),
-    soit depuis des fichiers .parquet (chargés à la volée avec échantillonnage de patchs).
+    Dataset simple qui travaille avec des données déjà chargées en mémoire RAM.
+    Il utilise un échantillonnage intelligent par clustering K-Means.
     """
-    def __init__(self, data_df: pd.DataFrame, features_path: str, feature_type: str = 'parquet', n_patches: int = 100):
+    def __init__(self, data_df: pd.DataFrame, features_list: list, n_patches: int = 100, n_clusters: int = 4):
         super().__init__()
         self.data_info = data_df
-        self.features_path = features_path
-        self.feature_type = feature_type
+        # La liste des features est passée directement à l'initialisation
+        self.all_features = features_list
         self.n_patches = n_patches
-
-        if self.feature_type == 'npy':
-            print("Mode NPY: Pré-chargement de toutes les features en RAM...")
-            self.all_features = []
-            for idx, row in tqdm(self.data_info.iterrows(), total=len(self.data_info)):
-                features_array = self._load_features_npy(row['id'])
-                self.all_features.append(features_array)
-            print(f"Dataset initialisé. {len(self.all_features)} tenseurs de features chargés en RAM.")
-        
-        elif self.feature_type == 'parquet':
-            print("Mode Parquet: Les features seront chargées et échantillonnées à la volée.")
-        
-        else:
-            raise ValueError("Type de feature non supporté. Choisissez 'npy' ou 'parquet'.")
+        self.n_clusters = n_clusters # Nombre de "types de tissus" à identifier
+        print(f"Dataset initialisé avec {len(self.all_features)} features pré-chargées.")
 
     def __len__(self):
         return len(self.data_info)
-    
-    def _load_features_npy(self, slide_filename: str):
-        slide_id = slide_filename.replace('.tiff', '')
-        feature_filename = f"features_{slide_id}_top64_downsampled2x.npy"
-        filepath = os.path.join(self.features_path, feature_filename)
-        return np.load(filepath)
-
-    def _load_features_parquet(self, slide_filename: str):
-        slide_id = slide_filename.replace('.tiff', '')
-        feature_filename = f"{slide_id}.parquet"
-        filepath = os.path.join(self.features_path, feature_filename)
-        try:
-            patch_df = pd.read_parquet(filepath)
-            feature_columns = [f'feat{i}' for i in range(1, 513)]
-            return patch_df[feature_columns].values
-        except FileNotFoundError:
-            return None
 
     def __getitem__(self, idx):
-        sample_info = self.data_info.iloc[idx]
-        slide_filename = sample_info['id']
-        report_text = sample_info['report']
-        labels = {
-            "gleason_score": sample_info['gleason_score'],
-            "grade_group": sample_info['grade_group'],
-            "tumor_volume": sample_info['tumor_volume']
-        }
-
-        features_array = None
-        if self.feature_type == 'npy':
-            features_array = self.all_features[idx]
+        # On récupère les features pré-chargées directement depuis la RAM (très rapide)
+        all_patches_features = self.all_features[idx]
         
-        elif self.feature_type == 'parquet':
-            all_patches_features = self._load_features_parquet(slide_filename)
+        # --- NOUVELLE LOGIQUE D'ÉCHANTILLONNAGE STRATIFIÉ PAR CLUSTERING ---
+        
+        # On s'assure qu'il y a assez de patchs pour le clustering
+        if len(all_patches_features) < self.n_clusters:
+            # Si pas assez de patchs, on revient à l'échantillonnage simple
+            replace = len(all_patches_features) < self.n_patches
+            indices = np.random.choice(len(all_patches_features), self.n_patches, replace=replace)
+            features_array = all_patches_features[indices]
+        else:
+            # 1. On applique K-Means pour trouver des "types" de patchs
+            # n_init='auto' est nécessaire pour les versions récentes de scikit-learn
+            kmeans = KMeans(n_clusters=self.n_clusters, random_state=42, n_init='auto').fit(all_patches_features)
+            cluster_labels = kmeans.labels_
+
+            # 2. On échantillonne un nombre égal de patchs dans chaque cluster
+            samples_per_cluster = self.n_patches // self.n_clusters
+            sampled_indices = []
             
-            if all_patches_features is not None:
-                # --- CORRECTION DE LA LOGIQUE D'ÉCHANTILLONNAGE ---
-                # On s'assure que chaque tenseur a TOUJOURS la même taille (`n_patches`).
-                num_available_patches = len(all_patches_features)
+            for i in range(self.n_clusters):
+                # On récupère les indices des patchs appartenant à ce cluster
+                indices_in_cluster = np.where(cluster_labels == i)[0]
                 
-                # On détermine si on a besoin de tirer avec remise (replace=True)
-                replace = num_available_patches < self.n_patches
+                # Si le cluster est vide (cas rare), on passe au suivant
+                if len(indices_in_cluster) == 0:
+                    continue
                 
-                # On tire toujours `n_patches` indices.
-                indices = np.random.choice(num_available_patches, self.n_patches, replace=replace)
-                features_array = all_patches_features[indices]
-                # --- FIN DE LA CORRECTION ---
+                # On détermine si on a besoin de tirer avec remise pour ce cluster spécifique
+                replace = len(indices_in_cluster) < samples_per_cluster
+                
+                # On tire `samples_per_cluster` patchs de ce cluster
+                chosen_indices = np.random.choice(indices_in_cluster, samples_per_cluster, replace=replace)
+                sampled_indices.extend(chosen_indices)
+            
+            # On s'assure d'avoir exactement `n_patches` au total, au cas où un cluster était vide
+            while len(sampled_indices) < self.n_patches:
+                # On complète avec des patchs tirés au hasard parmi tous les patchs
+                sampled_indices.append(np.random.randint(0, len(all_patches_features)))
 
-        if features_array is None:
-            print(f"Features non trouvées pour {slide_filename}, renvoi de l'échantillon 0 par défaut.")
-            return self.__getitem__(0)
+            features_array = all_patches_features[sampled_indices]
+        # --- FIN DE LA NOUVELLE LOGIQUE ---
 
+        # On récupère les métadonnées correspondantes.
+        sample_info = self.data_info.iloc[idx]
+        
         features_tensor = torch.from_numpy(features_array).float()
         
         return {
-            'id': slide_filename,
+            'id': sample_info['id'],
             'features': features_tensor,
-            'report': report_text,
-            'gleason_label': torch.tensor(labels["gleason_score"], dtype=torch.long),
-            'grade_group_label': torch.tensor(labels["grade_group"], dtype=torch.long),
-            'tumor_volume_label': torch.tensor(labels["tumor_volume"], dtype=torch.float)
+            'report': sample_info['report'],
+            'gleason_label': torch.tensor(sample_info["gleason_score"], dtype=torch.long),
+            'grade_group_label': torch.tensor(sample_info["grade_group"], dtype=torch.long),
+            'tumor_volume_label': torch.tensor(sample_info["tumor_volume"], dtype=torch.float)
         }
